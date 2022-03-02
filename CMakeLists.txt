@@ -3,12 +3,14 @@ project(snmp_diag)
 
 find_package(catkin REQUIRED COMPONENTS
     roscpp
+    diagnostic_msgs
 )
 
 
 catkin_package(
     CATKIN_DEPENDS
         roscpp
+        diagnostic_msgs
     #INCLUDE_DIRS include
     LIBRARIES ${PROJECT_NAME}
 )

@@ -2,8 +2,11 @@
 #include <net-snmp/net-snmp-includes.h>
 
 #include <ros/ros.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
 
 struct snmp_session session, *ss;
+std::string host = "localhost";
+ros::Publisher diag_pub;
 
 void timerCallback(const ros::TimerEvent event)
 {
@@ -20,16 +23,36 @@ void timerCallback(const ros::TimerEvent event)
   int status = snmp_synch_response(ss, pdu, &response);
   if (status == STAT_SUCCESS && response->errstat == SNMP_ERR_NOERROR)
   {
+    diagnostic_msgs::DiagnosticStatus ds;
+    ds.name = "snmp";
+    ds.hardware_id = host;
+    diagnostic_msgs::KeyValue kv;
+
     for(variable_list* vars = response->variables; vars; vars = vars->next_variable)
-       print_variable(vars->name, vars->name_length, vars);
+    {
+      print_variable(vars->name, vars->name_length, vars);
+      if(vars->type == ASN_COUNTER)
+      {
+        kv.key = "ifInOctets.8";
+        kv.value = std::to_string(*vars->val.integer);
+        ds.values.push_back(kv);
+      }
+    }
+    diagnostic_msgs::DiagnosticArray da;
+    da.status.push_back(ds);
+    diag_pub.publish(da);
   }
+
+  if (response)
+    snmp_free_pdu(response);
+
 }
 
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "snmp_diag");
 
-  std::string host = ros::param::param<std::string>("~host", "localhost");
+  host = ros::param::param<std::string>("~host", host);
 
   init_snmp("snmp_diag");
   snmp_sess_init( &session ); 
@@ -51,8 +74,9 @@ int main(int argc, char **argv)
 
   ros::Timer timer = nh.createTimer(ros::Duration(1.0), timerCallback);
 
+  diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 10);
 
   ros::spin();
-  
+  snmp_close(ss);
   return 0;
 }
