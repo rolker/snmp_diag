@@ -43,6 +43,8 @@ void timerCallback(const ros::TimerEvent event)
         {
           case ASN_INTEGER:
           case ASN_COUNTER:
+          case ASN_GAUGE:
+          case ASN_TIMETICKS:
             kv.value = std::to_string(*vars->val.integer);
             ds.values.push_back(kv);
             ds.level = diagnostic_msgs::DiagnosticStatus::OK;
@@ -69,7 +71,6 @@ void timerCallback(const ros::TimerEvent event)
             ds.level = diagnostic_msgs::DiagnosticStatus::OK;
             break;
         }
-        ds.values.push_back(kv);
       }
     }
     if (response)
