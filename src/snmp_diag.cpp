@@ -19,13 +19,16 @@ void timerCallback(const ros::TimerEvent event)
 
   get_node("ifInOctets.8", anOID, &anOID_len);
   snmp_add_null_var(pdu, anOID, anOID_len);
+
+  diagnostic_msgs::DiagnosticArray da;
+  diagnostic_msgs::DiagnosticStatus ds;
+  ds.name = "snmp";
+  ds.hardware_id = host;
+  ds.level = diagnostic_msgs::DiagnosticStatus::WARN;
   
   int status = snmp_synch_response(ss, pdu, &response);
   if (status == STAT_SUCCESS && response->errstat == SNMP_ERR_NOERROR)
   {
-    diagnostic_msgs::DiagnosticStatus ds;
-    ds.name = "snmp";
-    ds.hardware_id = host;
     diagnostic_msgs::KeyValue kv;
 
     for(variable_list* vars = response->variables; vars; vars = vars->next_variable)
@@ -36,12 +39,13 @@ void timerCallback(const ros::TimerEvent event)
         kv.key = "ifInOctets.8";
         kv.value = std::to_string(*vars->val.integer);
         ds.values.push_back(kv);
+        ds.level = diagnostic_msgs::DiagnosticStatus::OK;
       }
     }
-    diagnostic_msgs::DiagnosticArray da;
-    da.status.push_back(ds);
-    diag_pub.publish(da);
+
   }
+  da.status.push_back(ds);
+  diag_pub.publish(da);
 
   if (response)
     snmp_free_pdu(response);
