@@ -15,6 +15,17 @@ int max_items = 2000;
 
 ros::Publisher diag_pub;
 
+void print_numeric_oid(const oid* objid, size_t objid_len)
+{
+  for(int i = 0; i < objid_len; i++)
+  {
+    std::cout << objid[i];
+    if (i < objid_len - 1)
+      std::cout << ".";
+  }
+  std::cout << std::endl;
+}
+
 void timerCallback(const ros::TimerEvent event)
 {
 
@@ -35,7 +46,7 @@ void timerCallback(const ros::TimerEvent event)
   {
     memmove(end_name, name, name_length*sizeof(oid));
     end_name_length = name_length;
-    end_oid[end_name_length-1]++;
+    end_name[end_name_length-1]++;
   }
   else
   {
@@ -64,6 +75,11 @@ void timerCallback(const ros::TimerEvent event)
     {
       for(variable_list* vars = response->variables; vars; vars = vars->next_variable)
       {
+        // print_objid(vars->name, vars->name_length);
+        // print_numeric_oid(vars->name, vars->name_length);
+        // print_objid(end_name, end_name_length);
+        // print_numeric_oid(end_name, end_name_length);
+        // std::cout << snmp_oid_compare(end_name, end_name_length, vars->name, vars->name_length) << std::endl;
         if (snmp_oid_compare(end_name, end_name_length, vars->name, vars->name_length) <= 0)
         {
           /*
