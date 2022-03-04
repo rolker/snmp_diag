@@ -7,17 +7,13 @@
 struct snmp_session session, *ss;
 std::string host = "localhost";
 std::string root_oid = "1.3.6.1.2.1";
+std::string end_oid;
 double polling_period = 1.0;
-double static_output_period = 60.0;
-ros::Time last_static_output;
+std::string diag_name;
 
 int max_items = 2000;
 
 ros::Publisher diag_pub;
-
-// for each oid, which is the key, keep track of if it changes
-// and its last value
-std::map<std::string,std::pair<bool,std::string> > data_cache;
 
 void timerCallback(const ros::TimerEvent event)
 {
@@ -31,6 +27,26 @@ void timerCallback(const ros::TimerEvent event)
     snmp_perror(root_oid.c_str());
     exit(2);
   }
+
+  oid end_name[MAX_OID_LEN];
+  size_t end_name_length = MAX_OID_LEN;
+
+  if(end_oid.empty())
+  {
+    memmove(end_name, name, name_length*sizeof(oid));
+    end_name_length = name_length;
+    end_oid[end_name_length-1]++;
+  }
+  else
+  {
+    end_name_length = MAX_OID_LEN;
+    if (snmp_parse_oid(end_oid.c_str(), end_name, &end_name_length) == NULL)
+    {
+      snmp_perror(end_oid.c_str());
+      exit(2);
+    }
+  }
+
 
   int item_count = 0;
   bool done = false;
@@ -48,6 +64,15 @@ void timerCallback(const ros::TimerEvent event)
     {
       for(variable_list* vars = response->variables; vars; vars = vars->next_variable)
       {
+        if (snmp_oid_compare(end_name, end_name_length, vars->name, vars->name_length) <= 0)
+        {
+          /*
+            * not part of this subtree 
+            */
+          done = true;
+          continue;
+        }
+
         u_char* buf = nullptr;
         size_t buf_len = 0;
         size_t out_len = 0;
@@ -101,68 +126,28 @@ void timerCallback(const ros::TimerEvent event)
       snmp_free_pdu(response);
   }
 
+  diagnostic_msgs::DiagnosticArray da;
+  da.header.stamp = event.current_real;
+
+  diagnostic_msgs::DiagnosticStatus ds;
+
+  ds.name = diag_name;
+  ds.hardware_id = host;
+  ds.level = diagnostic_msgs::DiagnosticStatus::OK;
+
   for (auto kv: data)
   {
     if(!kv.first.empty())
     {
-      if(data_cache.find(kv.first) != data_cache.end())
-      {
-        if(data_cache[kv.first] != std::make_pair(false, kv.second))
-          data_cache[kv.first] = std::make_pair(true, kv.second); // this is a value that changes
-      }
-      else
-        data_cache[kv.first] = std::make_pair(false, kv.second);
-    }
-  }
-
-
-  diagnostic_msgs::DiagnosticArray da;
-  da.header.stamp = event.current_real;
-
-  if(event.current_real - last_static_output > ros::Duration(static_output_period))
-  {
-    diagnostic_msgs::DiagnosticStatus ds_static;
-
-    ds_static.name = "snmp";
-    ds_static.hardware_id = host;
-    ds_static.level = diagnostic_msgs::DiagnosticStatus::OK;
-
-    for (auto kv: data)
-    {
-      if(!kv.first.empty())
-      {
-        diagnostic_msgs::KeyValue dkv;
-        dkv.key = kv.first;
-        dkv.value = kv.second;
-        ds_static.values.push_back(dkv);
-      }
-    }
-
-    da.status.push_back(ds_static);
-
-    last_static_output = event.current_real;
-  }
-
-  diagnostic_msgs::DiagnosticStatus ds_dynamic;
-
-  ds_dynamic.name = "snmp_dynamic";
-  ds_dynamic.hardware_id = host;
-  ds_dynamic.level = diagnostic_msgs::DiagnosticStatus::OK;
-
-  for (auto kv: data)
-  {
-    if(!kv.first.empty() && data_cache[kv.first].first)
-    {
       diagnostic_msgs::KeyValue dkv;
       dkv.key = kv.first;
       dkv.value = kv.second;
-      ds_dynamic.values.push_back(dkv);
+      ds.values.push_back(dkv);
     }
   }
 
-  da.status.push_back(ds_dynamic);
+  da.status.push_back(ds);
   diag_pub.publish(da);
-
 }
 
 int main(int argc, char **argv)
@@ -172,6 +157,10 @@ int main(int argc, char **argv)
 
   host = ros::param::param<std::string>("~host", host);
   root_oid = ros::param::param<std::string>("~root_oid", root_oid);
+  end_oid = ros::param::param<std::string>("~end_oid", end_oid);
+
+  diag_name = ros::param::param<std::string>("~name", "snmp-"+host);
+
   polling_period = ros::param::param("~polling_period", polling_period);
   max_items = ros::param::param("~max_items", max_items);
 
