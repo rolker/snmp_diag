@@ -8,20 +8,20 @@ struct snmp_session session, *ss;
 std::string host = "localhost";
 std::string root_oid = "1.3.6.1.2.1";
 double polling_period = 1.0;
-int max_items = 1000;
+double static_output_period = 60.0;
+ros::Time last_static_output;
+
+int max_items = 2000;
 
 ros::Publisher diag_pub;
+
+// for each oid, which is the key, keep track of if it changes
+// and its last value
+std::map<std::string,std::pair<bool,std::string> > data_cache;
 
 void timerCallback(const ros::TimerEvent event)
 {
 
-  diagnostic_msgs::DiagnosticArray da;
-  da.header.stamp = ros::Time::now();
-  diagnostic_msgs::DiagnosticStatus ds;
-
-  ds.name = "snmp";
-  ds.hardware_id = host;
-  ds.level = diagnostic_msgs::DiagnosticStatus::WARN;
 
   oid name[MAX_OID_LEN];
   size_t name_length = MAX_OID_LEN;
@@ -34,6 +34,9 @@ void timerCallback(const ros::TimerEvent event)
 
   int item_count = 0;
   bool done = false;
+
+  std::vector< std::pair<std::string, std::string> > data;
+
   while(!done)
   {
     netsnmp_pdu* pdu = snmp_pdu_create(SNMP_MSG_GETNEXT);
@@ -50,13 +53,11 @@ void timerCallback(const ros::TimerEvent event)
         size_t out_len = 0;
         int buf_overflow = 0;
 
-        diagnostic_msgs::KeyValue kv;
         tree* subtree = netsnmp_sprint_realloc_objid_tree(&buf, &buf_len, &out_len, 1, &buf_overflow, vars->name, vars->name_length);
 
+        std::string key;
         if(out_len > 0)
-          kv.key = reinterpret_cast<char*>(buf);
-        else
-          kv.key = "error";
+          key = reinterpret_cast<char*>(buf);
         if(buf)
           SNMP_FREE(buf);
 
@@ -67,15 +68,13 @@ void timerCallback(const ros::TimerEvent event)
 
         sprint_realloc_value(&buf, &buf_len, &out_len, 1, vars->name, vars->name_length, vars);
         //sprint_realloc_by_type(&buf, &buf_len, &out_len, 1, vars, subtree->enums, nullptr, nullptr);
+        std::string value;
         if(out_len > 0)
-          kv.value = reinterpret_cast<char*>(buf);
-        else
-          kv.value = "error";
+          value = reinterpret_cast<char*>(buf);
         if(buf)
           SNMP_FREE(buf);
 
-        ds.values.push_back(kv);
-        ds.level = diagnostic_msgs::DiagnosticStatus::OK;
+        data.push_back(std::make_pair(key, value));
 
         item_count++;
         if(item_count > max_items)
@@ -101,7 +100,67 @@ void timerCallback(const ros::TimerEvent event)
     if (response)
       snmp_free_pdu(response);
   }
-  da.status.push_back(ds);
+
+  for (auto kv: data)
+  {
+    if(!kv.first.empty())
+    {
+      if(data_cache.find(kv.first) != data_cache.end())
+      {
+        if(data_cache[kv.first] != std::make_pair(false, kv.second))
+          data_cache[kv.first] = std::make_pair(true, kv.second); // this is a value that changes
+      }
+      else
+        data_cache[kv.first] = std::make_pair(false, kv.second);
+    }
+  }
+
+
+  diagnostic_msgs::DiagnosticArray da;
+  da.header.stamp = event.current_real;
+
+  if(event.current_real - last_static_output > ros::Duration(static_output_period))
+  {
+    diagnostic_msgs::DiagnosticStatus ds_static;
+
+    ds_static.name = "snmp";
+    ds_static.hardware_id = host;
+    ds_static.level = diagnostic_msgs::DiagnosticStatus::OK;
+
+    for (auto kv: data)
+    {
+      if(!kv.first.empty())
+      {
+        diagnostic_msgs::KeyValue dkv;
+        dkv.key = kv.first;
+        dkv.value = kv.second;
+        ds_static.values.push_back(dkv);
+      }
+    }
+
+    da.status.push_back(ds_static);
+
+    last_static_output = event.current_real;
+  }
+
+  diagnostic_msgs::DiagnosticStatus ds_dynamic;
+
+  ds_dynamic.name = "snmp_dynamic";
+  ds_dynamic.hardware_id = host;
+  ds_dynamic.level = diagnostic_msgs::DiagnosticStatus::OK;
+
+  for (auto kv: data)
+  {
+    if(!kv.first.empty() && data_cache[kv.first].first)
+    {
+      diagnostic_msgs::KeyValue dkv;
+      dkv.key = kv.first;
+      dkv.value = kv.second;
+      ds_dynamic.values.push_back(dkv);
+    }
+  }
+
+  da.status.push_back(ds_dynamic);
   diag_pub.publish(da);
 
 }
